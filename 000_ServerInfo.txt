@@ -1,0 +1,343 @@
+CREATE OR ALTER PROCEDURE dbo.usp_ServerAssessment
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @Result TABLE
+    (
+        SectionName   varchar(50),
+        PropertyName  varchar(100),
+        PropertyValue nvarchar(max)
+    );
+
+    DECLARE @Version varchar(50);
+    DECLARE @MajorVersion int;
+
+    SELECT @Version = CAST(SERVERPROPERTY('ProductVersion') AS varchar(50));
+
+    SET @MajorVersion = CAST(LEFT(@Version, CHARINDEX('.', @Version) - 1) AS int);
+
+    ------------------------------------------------------------
+    -- SERVER
+    ------------------------------------------------------------
+    INSERT @Result SELECT 'SERVER','ServerName',CAST(@@SERVERNAME AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','MachineName',CAST(SERVERPROPERTY('MachineName') AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','InstanceName',ISNULL(CAST(SERVERPROPERTY('InstanceName') AS nvarchar(max)),'MSSQLSERVER');
+    INSERT @Result SELECT 'SERVER','Edition',CAST(SERVERPROPERTY('Edition') AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','ProductVersion',CAST(SERVERPROPERTY('ProductVersion') AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','ProductLevel',CAST(SERVERPROPERTY('ProductLevel') AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','Collation',CAST(SERVERPROPERTY('Collation') AS nvarchar(max));
+    INSERT @Result SELECT 'SERVER','IsClustered',CAST(ISNULL(CAST(SERVERPROPERTY('IsClustered') AS int),0) AS nvarchar(10));
+    INSERT @Result SELECT 'SERVER','IsHadrEnabled',CAST(ISNULL(CAST(SERVERPROPERTY('IsHadrEnabled') AS int),0) AS nvarchar(10));
+
+    ------------------------------------------------------------
+    -- CPU / MEMORY
+    ------------------------------------------------------------
+    ;WITH cpu_info AS
+    (
+        SELECT
+            cpu_count,
+            hyperthread_ratio,
+            numa_node_count,
+            physical_memory_kb,
+            committed_kb,
+            committed_target_kb,
+            visible_target_kb,
+            stack_size_in_bytes,
+            os_quantum,
+            softnuma_configuration_desc,
+            sql_memory_model_desc,
+            socket_count,
+            cores_per_socket,
+            scheduler_count,
+            affinity_type_desc,
+            virtual_machine_type_desc
+        FROM sys.dm_os_sys_info
+    )
+    INSERT @Result
+    SELECT 'CPU','LogicalCPUCount',CAST(cpu_count AS nvarchar(50))
+    FROM cpu_info;
+
+    ;WITH cpu_info AS
+    (
+        SELECT cpu_count, hyperthread_ratio
+        FROM sys.dm_os_sys_info
+    )
+    INSERT @Result
+    SELECT
+        'CPU',
+        'PhysicalCoreCount',
+        CAST(
+            CASE
+                WHEN hyperthread_ratio > 0 THEN cpu_count / hyperthread_ratio
+                ELSE cpu_count
+            END
+        AS nvarchar(50))
+    FROM cpu_info;
+
+    ;WITH cpu_info AS
+    (
+        SELECT hyperthread_ratio
+        FROM sys.dm_os_sys_info
+    )
+    INSERT @Result
+    SELECT 'CPU','HyperthreadRatio',CAST(hyperthread_ratio AS nvarchar(50))
+    FROM cpu_info;
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'socket_count') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','SocketCount',CAST(socket_count AS nvarchar(50))
+        FROM sys.dm_os_sys_info;
+    END
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'cores_per_socket') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','CoresPerSocket',CAST(cores_per_socket AS nvarchar(50))
+        FROM sys.dm_os_sys_info;
+    END
+
+    INSERT @Result
+    SELECT 'CPU','NUMANodeCount',CAST(numa_node_count AS nvarchar(50))
+    FROM sys.dm_os_sys_info;
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'softnuma_configuration_desc') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','SoftNUMAConfiguration',CAST(softnuma_configuration_desc AS nvarchar(100))
+        FROM sys.dm_os_sys_info;
+    END
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'scheduler_count') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','SchedulerCount',CAST(scheduler_count AS nvarchar(50))
+        FROM sys.dm_os_sys_info;
+    END
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'affinity_type_desc') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','AffinityType',CAST(affinity_type_desc AS nvarchar(100))
+        FROM sys.dm_os_sys_info;
+    END
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'virtual_machine_type_desc') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'CPU','VirtualMachineType',CAST(virtual_machine_type_desc AS nvarchar(100))
+        FROM sys.dm_os_sys_info;
+    END
+
+    ;WITH cpu_info AS
+    (
+        SELECT cpu_count, hyperthread_ratio
+        FROM sys.dm_os_sys_info
+    )
+    INSERT @Result
+    SELECT
+        'CPU',
+        'HyperthreadingEnabled',
+        CAST(
+            CASE
+                WHEN hyperthread_ratio > 1 THEN 1
+                ELSE 0
+            END
+        AS nvarchar(10))
+    FROM cpu_info;
+
+    INSERT @Result
+    SELECT
+        'MEMORY',
+        'PhysicalRAM_GB',
+        CAST(CAST(physical_memory_kb / 1024.0 / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.dm_os_sys_info;
+
+    INSERT @Result
+    SELECT
+        'MEMORY',
+        'SQLCommittedMemory_GB',
+        CAST(CAST(committed_kb / 1024.0 / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.dm_os_sys_info;
+
+    INSERT @Result
+    SELECT
+        'MEMORY',
+        'SQLTargetMemory_GB',
+        CAST(CAST(committed_target_kb / 1024.0 / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.dm_os_sys_info;
+
+    IF COL_LENGTH('sys.dm_os_sys_info', 'visible_target_kb') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT
+            'MEMORY',
+            'VisibleTargetMemory_GB',
+            CAST(CAST(visible_target_kb / 1024.0 / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+        FROM sys.dm_os_sys_info;
+    END
+
+    IF EXISTS (SELECT 1 FROM sys.all_objects WHERE name = 'dm_os_process_memory')
+    BEGIN
+        INSERT @Result
+        SELECT
+            'MEMORY',
+            'OSAvailablePhysicalMemory_GB',
+            CAST(CAST(available_physical_memory_kb / 1024.0 / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+        FROM sys.dm_os_sys_memory;
+
+        INSERT @Result
+        SELECT
+            'MEMORY',
+            'SystemMemoryState',
+            CAST(system_memory_state_desc AS nvarchar(200))
+        FROM sys.dm_os_sys_memory;
+    END
+
+    ------------------------------------------------------------
+    -- CONFIG
+    ------------------------------------------------------------
+    INSERT @Result
+    SELECT 'CONFIG','MaxDOP',CAST(CONVERT(int,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='max degree of parallelism';
+
+    INSERT @Result
+    SELECT 'CONFIG','CostThresholdForParallelism',CAST(CONVERT(int,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='cost threshold for parallelism';
+
+    INSERT @Result
+    SELECT 'CONFIG','MaxServerMemory_MB',CAST(CONVERT(bigint,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='max server memory (MB)';
+
+    INSERT @Result
+    SELECT 'CONFIG','MinServerMemory_MB',CAST(CONVERT(bigint,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='min server memory (MB)';
+
+    INSERT @Result
+    SELECT
+        'CONFIG',
+        'MaxServerMemory_GB',
+        CAST(CAST(CONVERT(decimal(18,2), value_in_use) / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='max server memory (MB)';
+
+    INSERT @Result
+    SELECT
+        'CONFIG',
+        'MinServerMemory_GB',
+        CAST(CAST(CONVERT(decimal(18,2), value_in_use) / 1024.0 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='min server memory (MB)';
+
+    INSERT @Result
+    SELECT 'CONFIG','OptimizeForAdHoc',CAST(CONVERT(int,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='optimize for ad hoc workloads';
+
+    INSERT @Result
+    SELECT 'CONFIG','BackupCompressionDefault',CAST(CONVERT(int,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='backup compression default';
+
+    INSERT @Result
+    SELECT 'CONFIG','xp_cmdshell',CAST(CONVERT(int,value_in_use) AS nvarchar(50))
+    FROM sys.configurations
+    WHERE name='xp_cmdshell';
+
+    ------------------------------------------------------------
+    -- DATABASES
+    ------------------------------------------------------------
+    INSERT @Result
+    SELECT 'DATABASES','DatabaseCount',CAST(COUNT(*) AS nvarchar(50))
+    FROM sys.databases
+    WHERE database_id > 4;
+
+    INSERT @Result
+    SELECT
+        'DATABASES',
+        'TotalDBSizeGB',
+        CAST(CAST(SUM(size) * 8.0 / 1024 / 1024 AS decimal(18,2)) AS nvarchar(50))
+    FROM sys.master_files
+    WHERE database_id > 4;
+
+    ------------------------------------------------------------
+    -- AGENT
+    ------------------------------------------------------------
+    IF DB_ID('msdb') IS NOT NULL
+    BEGIN
+        INSERT @Result
+        SELECT 'AGENT','JobCount',CAST(COUNT(*) AS nvarchar(50))
+        FROM msdb.dbo.sysjobs;
+    END
+
+    ------------------------------------------------------------
+    -- LINKED SERVERS
+    ------------------------------------------------------------
+    DECLARE @LinkedServers nvarchar(max);
+
+    SELECT @LinkedServers =
+        STUFF
+        (
+            (
+                SELECT CHAR(13) + CHAR(10) + name
+                FROM sys.servers
+                WHERE server_id > 0
+                FOR XML PATH(''), TYPE
+            ).value('.','nvarchar(max)')
+        ,1,2,'');
+
+    INSERT @Result
+    SELECT 'LINKEDSERVER','LinkedServers',ISNULL(@LinkedServers,'');
+
+    ------------------------------------------------------------
+    -- OS (SQL 2017+)
+    ------------------------------------------------------------
+    IF @MajorVersion >= 14
+    BEGIN
+        INSERT @Result
+        SELECT 'OS','Platform',CAST(host_platform AS nvarchar(max))
+        FROM sys.dm_os_host_info;
+
+        INSERT @Result
+        SELECT 'OS','Distribution',CAST(host_distribution AS nvarchar(max))
+        FROM sys.dm_os_host_info;
+
+        INSERT @Result
+        SELECT 'OS','Release',CAST(host_release AS nvarchar(max))
+        FROM sys.dm_os_host_info;
+    END
+
+    ------------------------------------------------------------
+    -- OUTPUT 1: SUMMARY
+    ------------------------------------------------------------
+    SELECT
+        SectionName,
+        PropertyName,
+        PropertyValue
+    FROM @Result
+    ORDER BY
+        SectionName,
+        PropertyName;
+
+    ------------------------------------------------------------
+    -- OUTPUT 2: NUMA DETAILS
+    ------------------------------------------------------------
+    SELECT
+        node_id,
+        memory_node_id,
+        cpu_affinity_mask,
+        online_scheduler_count,
+        idle_scheduler_count,
+        active_worker_count,
+        avg_load_balance,
+        node_state_desc
+    FROM sys.dm_os_nodes
+    WHERE memory_node_id < 64
+    ORDER BY node_id;
+END
+GO
